@@ -1,31 +1,31 @@
 # Tic Tac Toe
 
-Jogo da velha para dois jogadores no mesmo computador, feito com React.
+A two-player tic tac toe game for the same computer, built with React.
 
-## Como funciona
+## How it works
 
-- Dois jogadores alternam entre **X** e **O**.
-- O vencedor é quem completar uma linha, coluna ou diagonal.
-- Se o tabuleiro encher sem vencedor, o jogo termina em empate.
-- Use o botão **Reiniciar** para começar uma nova partida.
+- Two players take turns playing **X** and **O**.
+- The winner is the first to complete a row, column, or diagonal.
+- If the board fills up with no winner, the game ends in a tie.
+- Use the **Reset** button to start a new game.
 
-## Como executar
+## Getting started
 
 ```bash
 npm install
 npm run dev
 ```
 
-Abra [http://localhost:5173](http://localhost:5173) no navegador.
+Open [http://localhost:5173](http://localhost:5173) in your browser.
 
-### Outros comandos
+### Other commands
 
 ```bash
-npm run build   # gera a versão de produção
-npm run preview # visualiza a build de produção
+npm run build   # build for production
+npm run preview # preview the production build
 ```
 
-## Tecnologias
+## Tech stack
 
 - React 19
 - Vite

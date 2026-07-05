@@ -64,7 +64,7 @@ export default function Home() {
   return (
     <div>
       <header>
-        <h1>Jogo da Velha</h1>
+        <h1>Tic Tac Toe</h1>
       </header>
       <div className="container">
         <div className="chart">
@@ -84,22 +84,22 @@ export default function Home() {
         </div>
         <div className="status">
           <div>
-            Jogador atual: <span>{current}</span>
+            Current player: <span>{current}</span>
           </div>
           <div>
             {isTie ? (
               <>
-                Resultado: <span>Empate</span>
+                Result: <span>Tie</span>
               </>
             ) : (
               <>
-                Vencedor: <span>{winnerSymbol}</span>
+                Winner: <span>{winnerSymbol}</span>
               </>
             )}
           </div>
           <div>
             <button type="button" onClick={reset}>
-              Reiniciar
+              Reset
             </button>
           </div>
         </div>
