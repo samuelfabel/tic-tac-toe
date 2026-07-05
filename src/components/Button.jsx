@@ -1,16 +1,15 @@
 import './Button.css';
 
-const Button = (props) => {
-    const handleClick = () => {
-        props.onClick(parseInt(props.index));
-    };
-
-    return (
-        <div className="tic-button">
-            <button onClick={handleClick}>{props.currentState[parseInt(props.index)]}</button>
-        </div>
-    );
-};
-
-
-export default Button;
+export default function Button({ index, value, isWinner, onClick }) {
+  return (
+    <div className="tic-button">
+      <button
+        type="button"
+        className={isWinner ? 'winner' : undefined}
+        onClick={() => onClick(index)}
+      >
+        {value}
+      </button>
+    </div>
+  );
+}
