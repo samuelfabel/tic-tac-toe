@@ -13,6 +13,10 @@
     padding: 0;
 }
 
+.tic-button button.winner {
+    background-color: #c8f7c5;
+}
+
 .tic-button:last-child button {
     margin-right: 0;
   }
