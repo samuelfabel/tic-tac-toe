@@ -1,0 +1,71 @@
+{
+  "name": "WF_COUPON_INGEST",
+  "meta": {
+    "description": "Ingestão de cupons → validar → associar produto/categoria → priorizar ofertas no score.",
+    "sprint": 2
+  },
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{ "field": "hours", "hoursInterval": 2 }]
+        }
+      },
+      "id": "schedule-coupons",
+      "name": "Schedule",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{$env.SHOPEE_VOUCHER_FEED_URL}}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "id": "fetch-coupons",
+      "name": "Coupon Source",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [260, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "const rows = Array.isArray($input.first().json.data)\n  ? $input.first().json.data\n  : Array.isArray($input.first().json.vouchers)\n    ? $input.first().json.vouchers\n    : [];\n\nreturn rows.map((raw) => {\n  const code = raw.voucherCode ?? raw.code ?? null;\n  const expires = raw.endTime ?? raw.expires_at ?? null;\n  const valid = Boolean(code);\n  return {\n    json: {\n      source: 'shopee',\n      code,\n      description: raw.voucherName ?? raw.description ?? null,\n      discount_type: raw.discountType === 'PERCENT' ? 'percent' : 'fixed',\n      discount_value: raw.discountValue != null ? Number(raw.discountValue) : null,\n      minimum_purchase: raw.minSpend != null ? Number(raw.minSpend) : null,\n      maximum_discount: raw.cap != null ? Number(raw.cap) : null,\n      starts_at: raw.startTime ?? null,\n      expires_at: expires,\n      product_id: null,\n      category: raw.category ?? null,\n      affiliate_url: raw.offerLink ?? null,\n      active: valid,\n      raw\n    }\n  };\n}).filter((i) => i.json.active);"
+      },
+      "id": "validate-coupons",
+      "name": "Validar cupons",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [520, 0]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO coupons (\n  source, code, description, discount_type, discount_value,\n  minimum_purchase, maximum_discount, starts_at, expires_at,\n  product_id, category, affiliate_url, active\n) VALUES (\n  $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,TRUE\n)\nON CONFLICT DO NOTHING;",
+        "options": {}
+      },
+      "id": "save-coupons",
+      "name": "Salvar cupons",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [780, 0],
+      "notes": "Se precisar upsert por code+source, adicione UNIQUE(source, code) numa migration futura."
+    }
+  ],
+  "connections": {
+    "Schedule": {
+      "main": [[{ "node": "Coupon Source", "type": "main", "index": 0 }]]
+    },
+    "Coupon Source": {
+      "main": [[{ "node": "Validar cupons", "type": "main", "index": 0 }]]
+    },
+    "Validar cupons": {
+      "main": [[{ "node": "Salvar cupons", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": { "executionOrder": "v1", "timezone": "America/Sao_Paulo" },
+  "tags": [{ "name": "coupons" }, { "name": "sprint-2" }]
+}

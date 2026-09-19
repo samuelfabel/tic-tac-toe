@@ -1,0 +1,40 @@
+{
+  "name": "WF_PRICE_ANALYSIS",
+  "meta": {
+    "description": "Anexa estatísticas de histórico de preço (30d) para flags de conteúdo.",
+    "sprint": 2
+  },
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{ "field": "hours", "hoursInterval": 1 }]
+        }
+      },
+      "id": "schedule-price",
+      "name": "Schedule",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT p.id, p.title, p.price, s.avg_price_30d, s.min_price_30d, s.max_price_30d, s.samples_30d,\n  CASE\n    WHEN s.samples_30d >= 3 AND p.price <= s.min_price_30d THEN 'MENOR_PRECO_REGISTRADO'\n    WHEN s.avg_price_30d IS NOT NULL AND p.price <= s.avg_price_30d * 0.75 THEN 'MUITO_ABAIXO_DO_HISTORICO'\n    ELSE NULL\n  END AS price_story\nFROM products p\nJOIN v_product_price_stats s ON s.product_id = p.id\nWHERE p.active AND p.opportunity_score >= COALESCE(($env.OPPORTUNITY_SCORE_THRESHOLD)::numeric, 70)\nORDER BY p.opportunity_score DESC\nLIMIT 100;",
+        "options": {}
+      },
+      "id": "analyze",
+      "name": "Analisar histórico 30d",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [260, 0]
+    }
+  ],
+  "connections": {
+    "Schedule": {
+      "main": [[{ "node": "Analisar histórico 30d", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "tags": [{ "name": "scoring" }]
+}

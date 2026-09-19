@@ -1,0 +1,87 @@
+{
+  "name": "WF_SOURCE_MERCADOLIVRE",
+  "meta": {
+    "description": "Ingestão Mercado Livre → ProductNormalized. Respeitar channel_rules (WhatsApp/Telegram bloqueados).",
+    "schedule": "0 * * * *",
+    "sprint": "posterior"
+  },
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{ "field": "hours", "hoursInterval": 1 }]
+        }
+      },
+      "id": "schedule-ml",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{$env.ML_OFFER_FEED_URL}}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "id": "fetch-ml",
+      "name": "Get Products (ML Affiliate)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [260, 0],
+      "notes": "Usar geração oficial de links de afiliado ML. Sem scraping."
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = Array.isArray($input.first().json.results)\n  ? $input.first().json.results\n  : Array.isArray($input.first().json.data)\n    ? $input.first().json.data\n    : [];\n\nreturn items.map((raw) => ({\n  json: {\n    source: 'mercadolivre',\n    source_product_id: String(raw.id ?? raw.item_id ?? ''),\n    title: raw.title ?? '',\n    description: raw.description ?? null,\n    product_url: raw.permalink ?? raw.product_url ?? null,\n    affiliate_url: raw.affiliate_link ?? raw.affiliate_url ?? null,\n    image_url: raw.thumbnail ?? raw.image_url ?? null,\n    category: raw.category_id ?? null,\n    subcategory: null,\n    price: Number(raw.price ?? 0),\n    original_price: raw.original_price != null ? Number(raw.original_price) : null,\n    rating: raw.rating_average != null ? Number(raw.rating_average) : null,\n    review_count: raw.reviews_total != null ? Number(raw.reviews_total) : null,\n    sold_count: raw.sold_quantity != null ? Number(raw.sold_quantity) : null,\n    commission_percent: raw.commission_percent != null ? Number(raw.commission_percent) : null,\n    extra_commission_percent: 0,\n    currency: raw.currency_id ?? 'BRL',\n    coupon_code: null,\n    raw\n  }\n})).filter((i) => i.json.source_product_id && i.json.title);"
+      },
+      "id": "normalize-ml",
+      "name": "Normalize → ProductNormalized",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [520, 0]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO products (\n  source, source_product_id, title, description,\n  product_url, affiliate_url, image_url, category,\n  price, original_price, rating, review_count, sold_count,\n  commission_percent, extra_commission_percent, currency,\n  last_seen_at, active\n) VALUES (\n  $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,NOW(),TRUE\n)\nON CONFLICT (source, source_product_id) DO UPDATE SET\n  title = EXCLUDED.title,\n  price = EXCLUDED.price,\n  original_price = EXCLUDED.original_price,\n  rating = EXCLUDED.rating,\n  review_count = EXCLUDED.review_count,\n  sold_count = EXCLUDED.sold_count,\n  affiliate_url = COALESCE(EXCLUDED.affiliate_url, products.affiliate_url),\n  last_seen_at = NOW()\nRETURNING id, price, original_price;",
+        "options": {}
+      },
+      "id": "upsert-ml",
+      "name": "Upsert PostgreSQL",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [780, 0]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO product_price_history (product_id, price, original_price) VALUES ($1, $2, $3);",
+        "options": {}
+      },
+      "id": "record-price-ml",
+      "name": "Record Price History",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1040, 0]
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [[{ "node": "Get Products (ML Affiliate)", "type": "main", "index": 0 }]]
+    },
+    "Get Products (ML Affiliate)": {
+      "main": [[{ "node": "Normalize → ProductNormalized", "type": "main", "index": 0 }]]
+    },
+    "Normalize → ProductNormalized": {
+      "main": [[{ "node": "Upsert PostgreSQL", "type": "main", "index": 0 }]]
+    },
+    "Upsert PostgreSQL": {
+      "main": [[{ "node": "Record Price History", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": { "executionOrder": "v1", "timezone": "America/Sao_Paulo" },
+  "tags": [{ "name": "source" }, { "name": "mercadolivre" }]
+}

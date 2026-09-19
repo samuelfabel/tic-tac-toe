@@ -1,0 +1,99 @@
+{
+  "name": "WF_PRODUCT_SCORE",
+  "meta": {
+    "description": "Opportunity Engine: busca candidatos, calcula score determinístico, aplica threshold (>=70). IA só depois.",
+    "schedule": "*/30 * * * *",
+    "sprint": 2
+  },
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{ "field": "minutes", "minutesInterval": 30 }]
+        }
+      },
+      "id": "schedule-score",
+      "name": "Schedule",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n  p.*,\n  s.avg_price_30d,\n  s.min_price_30d,\n  s.max_price_30d,\n  s.samples_30d,\n  EXISTS (\n    SELECT 1 FROM coupons c\n    WHERE c.active = TRUE\n      AND (c.product_id = p.id OR c.category = p.category)\n      AND (c.expires_at IS NULL OR c.expires_at > NOW())\n  ) AS has_active_coupon\nFROM products p\nLEFT JOIN v_product_price_stats s ON s.product_id = p.id\nWHERE p.active = TRUE\n  AND p.last_seen_at > NOW() - INTERVAL '48 hours'\n  AND (p.opportunity_score IS NULL OR p.last_seen_at > COALESCE(p.ai_classified_at, '1970-01-01'))\nORDER BY p.last_seen_at DESC\nLIMIT 200;",
+        "options": {}
+      },
+      "id": "fetch-candidates",
+      "name": "Buscar produtos candidatos",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [260, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "/**\n * Opportunity Score (espelho de src/scoring/opportunity-score.mjs)\n * 30 desconto | 20 comissão | 15 rating | 10 reviews | 10 sales | 10 histórico | 5 cupom\n */\nfunction clamp(n, min, max) { return Math.max(min, Math.min(max, n)); }\n\nfunction scoreOne(p) {\n  const price = Number(p.price);\n  const original = p.original_price != null ? Number(p.original_price) : null;\n  const avg = p.avg_price_30d != null ? Number(p.avg_price_30d) : null;\n  const min30 = p.min_price_30d != null ? Number(p.min_price_30d) : null;\n  const max30 = p.max_price_30d != null ? Number(p.max_price_30d) : null;\n  const samples = Number(p.samples_30d || 0);\n\n  const announced = (original && original > price) ? ((original - price) / original) * 100 : 0;\n  const historical = (avg && avg > price) ? ((avg - price) / avg) * 100 : 0;\n  const effective = historical * 0.7 + announced * 0.3;\n  const discount = clamp((effective / 50) * 30, 0, 30);\n\n  const flags = [];\n  if (min30 != null && price <= min30 && samples >= 3) flags.push('MENOR_PRECO_30D');\n  if (historical >= 25) flags.push('ABAIXO_DA_MEDIA_HISTORICA');\n\n  const totalPct = Number(p.commission_percent || 0) + Number(p.extra_commission_percent || 0);\n  const commission = clamp((totalPct / 15) * 20, 0, 20);\n  const potential_revenue = Math.round(((price * totalPct) / 100) * 100) / 100;\n\n  const rating = p.rating != null ? clamp((Number(p.rating) / 5) * 15, 0, 15) : 0;\n  const reviews = p.review_count > 0 ? clamp((Math.log10(Number(p.review_count) + 1) / Math.log10(5001)) * 10, 0, 10) : 0;\n  const sales = p.sold_count > 0 ? clamp((Math.log10(Number(p.sold_count) + 1) / Math.log10(10001)) * 10, 0, 10) : 0;\n\n  let price_history = 0;\n  if (samples >= 2 && min30 != null && max30 != null) {\n    const range = max30 - min30;\n    price_history = range <= 0 ? 2 : clamp((1 - (price - min30) / range) * 10, 0, 10);\n  }\n\n  const coupon = p.has_active_coupon ? 5 : 0;\n  const total = Math.round((discount + commission + rating + reviews + sales + price_history + coupon) * 100) / 100;\n\n  return {\n    product_id: p.id,\n    opportunity_score: clamp(total, 0, 100),\n    breakdown: { discount, commission, rating, reviews, sales, price_history, coupon },\n    flags,\n    potential_revenue\n  };\n}\n\nconst threshold = Number($env.OPPORTUNITY_SCORE_THRESHOLD || 70);\nreturn $input.all().map((item) => {\n  const scored = scoreOne(item.json);\n  return {\n    json: {\n      ...scored,\n      pass: scored.opportunity_score >= threshold,\n      threshold\n    }\n  };\n});"
+      },
+      "id": "calc-score",
+      "name": "Calcular Opportunity Score",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [520, 0]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [{ "value1": "={{$json.pass}}", "value2": true }]
+        }
+      },
+      "id": "if-threshold",
+      "name": "Score >= threshold?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [780, 0]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE products SET opportunity_score = $1 WHERE id = $2;",
+        "options": {}
+      },
+      "id": "save-pass",
+      "name": "Salvar score (aprovado)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1040, -100]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE products SET opportunity_score = $1, ai_publishable = FALSE WHERE id = $2;",
+        "options": {}
+      },
+      "id": "save-fail",
+      "name": "Descartar (score baixo)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1040, 120]
+    }
+  ],
+  "connections": {
+    "Schedule": {
+      "main": [[{ "node": "Buscar produtos candidatos", "type": "main", "index": 0 }]]
+    },
+    "Buscar produtos candidatos": {
+      "main": [[{ "node": "Calcular Opportunity Score", "type": "main", "index": 0 }]]
+    },
+    "Calcular Opportunity Score": {
+      "main": [[{ "node": "Score >= threshold?", "type": "main", "index": 0 }]]
+    },
+    "Score >= threshold?": {
+      "main": [
+        [{ "node": "Salvar score (aprovado)", "type": "main", "index": 0 }],
+        [{ "node": "Descartar (score baixo)", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": { "executionOrder": "v1", "timezone": "America/Sao_Paulo" },
+  "tags": [{ "name": "scoring" }, { "name": "sprint-2" }]
+}

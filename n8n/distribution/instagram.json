@@ -1,0 +1,107 @@
+{
+  "name": "WF_DISTRIBUTE_INSTAGRAM",
+  "meta": {
+    "description": "Sprint 4: gera asset/conteúdo para Instagram via APIs oficiais Meta. Sem browser automation. Produtos Shopee elegíveis podem usar marcação oficial quando disponível.",
+    "sprint": 4
+  },
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{ "field": "hours", "hoursInterval": 3 }]
+        }
+      },
+      "id": "schedule-ig",
+      "name": "Schedule",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH settings AS (\n  SELECT * FROM channel_settings WHERE channel = 'instagram' AND enabled = TRUE\n),\ntoday AS (\n  SELECT COUNT(*) AS cnt FROM publications\n  WHERE channel = 'instagram' AND status = 'published' AND published_at::date = CURRENT_DATE\n)\nSELECT p.id, p.title, p.image_url, p.affiliate_url, p.source, p.ai_content_angle, p.price, p.rating, p.sold_count\nFROM products p\nCROSS JOIN settings s\nCROSS JOIN today t\nWHERE p.active AND p.ai_publishable = TRUE\n  AND t.cnt < s.max_posts_per_day\n  AND EXISTS (\n    SELECT 1 FROM channel_rules r\n    WHERE r.source = p.source AND r.channel = 'instagram' AND r.allowed = TRUE\n  )\n  AND NOT EXISTS (\n    SELECT 1 FROM publications pub\n    WHERE pub.product_id = p.id AND pub.channel = 'instagram' AND pub.status = 'published'\n      AND pub.published_at > NOW() - INTERVAL '24 hours'\n  )\nORDER BY p.opportunity_score DESC\nLIMIT 1;",
+        "options": {}
+      },
+      "id": "pick-ig",
+      "name": "Selecionar oferta Instagram",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [260, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "const p = $json;\nconst price = Number(p.price).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });\nconst caption = [\n  `🧸 Achadinho para o feed!`,\n  p.title,\n  `Por apenas ${price} hoje.`,\n  p.rating != null ? `⭐ ${p.rating}` : null,\n  p.sold_count != null ? `🛒 +${Number(p.sold_count).toLocaleString('pt-BR')} vendidos` : null,\n  p.ai_content_angle ? `Ângulo: ${p.ai_content_angle}` : null,\n  '',\n  'Link na bio / marcação do produto quando elegível.',\n  '#achadinhos #maternidade #kids'\n].filter((x) => x !== null).join('\\n');\n\nreturn [{ json: { ...p, caption } }];"
+      },
+      "id": "build-caption",
+      "name": "Montar caption",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [520, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v21.0/{{$env.INSTAGRAM_BUSINESS_ACCOUNT_ID}}/media",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"image_url\": \"{{$json.image_url}}\",\n  \"caption\": {{JSON.stringify($json.caption)}},\n  \"access_token\": \"{{$env.META_ACCESS_TOKEN}}\"\n}",
+        "options": {}
+      },
+      "id": "ig-container",
+      "name": "IG — Create media container",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [780, 0],
+      "notes": "Preferir credential OAuth Meta no n8n. access_token no body só para MVP local — migrar para header/credential."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v21.0/{{$env.INSTAGRAM_BUSINESS_ACCOUNT_ID}}/media_publish",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"creation_id\": \"{{$json.id}}\",\n  \"access_token\": \"{{$env.META_ACCESS_TOKEN}}\"\n}",
+        "options": {}
+      },
+      "id": "ig-publish",
+      "name": "IG — Publish",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1040, 0]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO publications (product_id, channel, content, affiliate_url, status, external_id, published_at)\nVALUES ($1, 'instagram', $2, $3, 'published', $4, NOW());",
+        "options": {}
+      },
+      "id": "log-ig",
+      "name": "Registrar publication",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1300, 0]
+    }
+  ],
+  "connections": {
+    "Schedule": {
+      "main": [[{ "node": "Selecionar oferta Instagram", "type": "main", "index": 0 }]]
+    },
+    "Selecionar oferta Instagram": {
+      "main": [[{ "node": "Montar caption", "type": "main", "index": 0 }]]
+    },
+    "Montar caption": {
+      "main": [[{ "node": "IG — Create media container", "type": "main", "index": 0 }]]
+    },
+    "IG — Create media container": {
+      "main": [[{ "node": "IG — Publish", "type": "main", "index": 0 }]]
+    },
+    "IG — Publish": {
+      "main": [[{ "node": "Registrar publication", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": { "executionOrder": "v1", "timezone": "America/Sao_Paulo" },
+  "tags": [{ "name": "distribution" }, { "name": "instagram" }]
+}

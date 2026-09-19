@@ -1,0 +1,10 @@
+# Caddyfile de exemplo (produção)
+#
+# kids-deals.example.com {
+#     reverse_proxy n8n:5678
+# }
+
+kids-deals.example.com {
+	encode gzip
+	reverse_proxy 127.0.0.1:5678
+}

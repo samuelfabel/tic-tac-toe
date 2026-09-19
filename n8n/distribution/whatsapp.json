@@ -1,0 +1,73 @@
+{
+  "name": "WF_DISTRIBUTE_WHATSAPP",
+  "meta": {
+    "description": "Sprint 5: publica via WhatsApp Business Cloud API. Respeita channel_rules, frequência e anti-spam.",
+    "sprint": 5
+  },
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{ "field": "minutes", "minutesInterval": 30 }]
+        }
+      },
+      "id": "schedule-wa",
+      "name": "Schedule",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH settings AS (\n  SELECT * FROM channel_settings WHERE channel = 'whatsapp' AND enabled = TRUE\n),\ntoday AS (\n  SELECT COUNT(*) AS cnt FROM publications\n  WHERE channel = 'whatsapp' AND status = 'published' AND published_at::date = CURRENT_DATE\n),\nlast_pub AS (\n  SELECT MAX(published_at) AS ts FROM publications WHERE channel = 'whatsapp' AND status = 'published'\n)\nSELECT p.*,\n  (SELECT content FROM publications WHERE product_id = p.id AND channel = 'whatsapp' AND status = 'draft' ORDER BY id DESC LIMIT 1) AS draft_content\nFROM products p\nCROSS JOIN settings s\nCROSS JOIN today t\nCROSS JOIN last_pub lp\nWHERE p.active AND p.ai_publishable = TRUE\n  AND p.opportunity_score >= COALESCE(($env.OPPORTUNITY_SCORE_THRESHOLD)::numeric, 70)\n  AND t.cnt < s.max_posts_per_day\n  AND (lp.ts IS NULL OR lp.ts < NOW() - (s.min_interval_minutes || ' minutes')::interval)\n  AND EXISTS (\n    SELECT 1 FROM channel_rules r\n    WHERE r.source = p.source AND r.channel = 'whatsapp' AND r.allowed = TRUE\n  )\n  AND NOT EXISTS (\n    SELECT 1 FROM publications pub\n    WHERE pub.product_id = p.id AND pub.channel = 'whatsapp' AND pub.status = 'published'\n      AND pub.published_at > NOW() - INTERVAL '24 hours'\n  )\nORDER BY p.opportunity_score DESC\nLIMIT 1;",
+        "options": {}
+      },
+      "id": "pick-product",
+      "name": "Selecionar oferta (regras)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [260, 0]
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "phoneNumberId": "={{$env.WHATSAPP_PHONE_NUMBER_ID}}",
+        "recipientPhoneNumber": "={{$env.WHATSAPP_BROADCAST_RECIPIENT}}",
+        "textBody": "={{$json.draft_content || $json.content_whatsapp}}",
+        "additionalFields": {}
+      },
+      "id": "send-wa",
+      "name": "WhatsApp Business Cloud",
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1,
+      "position": [520, 0],
+      "notes": "Usar WhatsApp Business Platform/Cloud API — nunca WhatsApp Web automation."
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO publications (product_id, channel, content, affiliate_url, status, external_id, published_at)\nVALUES ($1, 'whatsapp', $2, $3, 'published', $4, NOW());",
+        "options": {}
+      },
+      "id": "log-pub",
+      "name": "Registrar publication",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [780, 0]
+    }
+  ],
+  "connections": {
+    "Schedule": {
+      "main": [[{ "node": "Selecionar oferta (regras)", "type": "main", "index": 0 }]]
+    },
+    "Selecionar oferta (regras)": {
+      "main": [[{ "node": "WhatsApp Business Cloud", "type": "main", "index": 0 }]]
+    },
+    "WhatsApp Business Cloud": {
+      "main": [[{ "node": "Registrar publication", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": { "executionOrder": "v1", "timezone": "America/Sao_Paulo" },
+  "tags": [{ "name": "distribution" }, { "name": "whatsapp" }]
+}

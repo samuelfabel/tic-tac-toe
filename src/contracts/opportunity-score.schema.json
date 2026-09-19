@@ -1,0 +1,19 @@
+{
+  "title": "OpportunityScoreInput",
+  "description": "Entrada do Opportunity Engine. Preço e desconto histórico são calculados por regras/dados, nunca pela IA.",
+  "type": "object",
+  "required": ["product"],
+  "properties": {
+    "product": { "$ref": "product-normalized.schema.json" },
+    "price_stats": {
+      "type": "object",
+      "properties": {
+        "avg_price_30d": { "type": ["number", "null"] },
+        "min_price_30d": { "type": ["number", "null"] },
+        "max_price_30d": { "type": ["number", "null"] },
+        "samples_30d": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "has_active_coupon": { "type": "boolean", "default": false }
+  }
+}

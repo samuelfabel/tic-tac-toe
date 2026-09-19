@@ -1,0 +1,104 @@
+{
+  "name": "WF_SOURCE_SHOPEE",
+  "meta": {
+    "description": "Ingestão Shopee → formato ProductNormalized → upsert Postgres + histórico de preço. Usa API/feed oficial de afiliados — sem scraping.",
+    "schedule": "*/45 * * * *",
+    "sprint": 1
+  },
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{ "field": "minutes", "minutesInterval": 45 }]
+        }
+      },
+      "id": "schedule-shopee",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{$env.SHOPEE_OFFER_FEED_URL}}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "id": "fetch-shopee",
+      "name": "Get Products (Shopee Affiliate API)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [260, 0],
+      "notes": "Substitua pela URL oficial do programa de afiliados Shopee BR. Credenciais via Header Auth / env — nunca hardcoded."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Normaliza resposta Shopee → ProductNormalized\nconst items = Array.isArray($input.first().json.items)\n  ? $input.first().json.items\n  : Array.isArray($input.first().json.data)\n    ? $input.first().json.data\n    : [$input.first().json];\n\nreturn items.map((raw) => ({\n  json: {\n    source: 'shopee',\n    source_product_id: String(raw.itemId ?? raw.item_id ?? raw.product_id ?? ''),\n    title: raw.productName ?? raw.title ?? raw.name ?? '',\n    description: raw.description ?? null,\n    product_url: raw.productLink ?? raw.product_url ?? null,\n    affiliate_url: raw.offerLink ?? raw.affiliate_url ?? null,\n    image_url: raw.imageUrl ?? raw.image_url ?? null,\n    category: raw.categoryName ?? null,\n    subcategory: null,\n    price: Number(raw.priceMin ?? raw.price ?? 0),\n    original_price: raw.priceMax != null ? Number(raw.priceMax) : (raw.original_price != null ? Number(raw.original_price) : null),\n    rating: raw.rating != null ? Number(raw.rating) : null,\n    review_count: raw.ratingCount != null ? Number(raw.ratingCount) : null,\n    sold_count: raw.sales != null ? Number(raw.sales) : null,\n    commission_percent: raw.commissionRate != null ? Number(raw.commissionRate) : null,\n    extra_commission_percent: raw.extraCommissionRate != null ? Number(raw.extraCommissionRate) : 0,\n    currency: 'BRL',\n    coupon_code: raw.voucherCode ?? null,\n    raw\n  }\n})).filter((i) => i.json.source_product_id && i.json.title);"
+      },
+      "id": "normalize-shopee",
+      "name": "Normalize → ProductNormalized",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [520, 0]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO products (\n  source, source_product_id, title, description,\n  product_url, affiliate_url, image_url, category,\n  price, original_price, rating, review_count, sold_count,\n  commission_percent, extra_commission_percent, currency,\n  first_seen_at, last_seen_at, active\n) VALUES (\n  $1, $2, $3, $4,\n  $5, $6, $7, $8,\n  $9, $10, $11, $12, $13,\n  $14, $15, $16,\n  NOW(), NOW(), TRUE\n)\nON CONFLICT (source, source_product_id) DO UPDATE SET\n  title = EXCLUDED.title,\n  description = COALESCE(EXCLUDED.description, products.description),\n  product_url = COALESCE(EXCLUDED.product_url, products.product_url),\n  affiliate_url = COALESCE(EXCLUDED.affiliate_url, products.affiliate_url),\n  image_url = COALESCE(EXCLUDED.image_url, products.image_url),\n  price = EXCLUDED.price,\n  original_price = EXCLUDED.original_price,\n  rating = EXCLUDED.rating,\n  review_count = EXCLUDED.review_count,\n  sold_count = EXCLUDED.sold_count,\n  commission_percent = EXCLUDED.commission_percent,\n  extra_commission_percent = EXCLUDED.extra_commission_percent,\n  last_seen_at = NOW(),\n  active = TRUE\nRETURNING id, source, source_product_id, price, original_price,\n  (xmax = 0) AS inserted;",
+        "options": {}
+      },
+      "id": "upsert-products",
+      "name": "Upsert PostgreSQL",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [780, 0],
+      "notes": "Configure queryReplacement com os campos do item normalizado. Credencial Postgres via n8n Credentials."
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO product_price_history (product_id, price, original_price)\nSELECT $1, $2, $3\nWHERE NOT EXISTS (\n  SELECT 1 FROM product_price_history h\n  WHERE h.product_id = $1\n    AND h.price = $2\n    AND h.captured_at > NOW() - INTERVAL '30 minutes'\n);",
+        "options": {}
+      },
+      "id": "record-price",
+      "name": "Record Price History",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1040, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Detecta mudanças relevantes (preço caiu)\nconst prev = $input.first().json;\nconst flags = [];\nif (prev.price_dropped === true) flags.push('PRICE_DROP');\nreturn [{ json: { ...prev, change_flags: flags } }];"
+      },
+      "id": "detect-changes",
+      "name": "Detect Changes",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1300, 0]
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [[{ "node": "Get Products (Shopee Affiliate API)", "type": "main", "index": 0 }]]
+    },
+    "Get Products (Shopee Affiliate API)": {
+      "main": [[{ "node": "Normalize → ProductNormalized", "type": "main", "index": 0 }]]
+    },
+    "Normalize → ProductNormalized": {
+      "main": [[{ "node": "Upsert PostgreSQL", "type": "main", "index": 0 }]]
+    },
+    "Upsert PostgreSQL": {
+      "main": [[{ "node": "Record Price History", "type": "main", "index": 0 }]]
+    },
+    "Record Price History": {
+      "main": [[{ "node": "Detect Changes", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/Sao_Paulo"
+  },
+  "tags": [{ "name": "source" }, { "name": "shopee" }, { "name": "sprint-1" }]
+}

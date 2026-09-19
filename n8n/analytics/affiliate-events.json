@@ -1,0 +1,55 @@
+{
+  "name": "WF_AFFILIATE_EVENTS",
+  "meta": {
+    "description": "Sprint 6: webhook/ingestão de eventos CLICK/ORDER/SALE/COMMISSION. Metabase consome as views.",
+    "sprint": 6
+  },
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "affiliate-events",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "webhook-events",
+      "name": "Webhook Affiliate Events",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 0],
+      "notes": "Proteja com header secret / Basic Auth. Nunca deixe webhook aberto."
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body || $input.first().json;\nconst allowed = ['CLICK','ORDER','SALE','COMMISSION','CANCELLED','RETURNED'];\nconst eventType = String(body.event_type || '').toUpperCase();\nif (!allowed.includes(eventType)) {\n  throw new Error('event_type inválido: ' + eventType);\n}\nreturn [{\n  json: {\n    product_id: body.product_id ?? null,\n    publication_id: body.publication_id ?? null,\n    source: body.source ?? null,\n    event_type: eventType,\n    value: body.value != null ? Number(body.value) : null,\n    currency: body.currency || 'BRL',\n    external_ref: body.external_ref ?? null,\n    metadata: body.metadata ?? {}\n  }\n}];"
+      },
+      "id": "validate-event",
+      "name": "Validar evento",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [260, 0]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO affiliate_events (\n  product_id, publication_id, source, event_type, value, currency, external_ref, metadata\n) VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb)\nRETURNING id, event_type, occurred_at;",
+        "options": {}
+      },
+      "id": "insert-event",
+      "name": "Salvar affiliate_event",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [520, 0]
+    }
+  ],
+  "connections": {
+    "Webhook Affiliate Events": {
+      "main": [[{ "node": "Validar evento", "type": "main", "index": 0 }]]
+    },
+    "Validar evento": {
+      "main": [[{ "node": "Salvar affiliate_event", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "tags": [{ "name": "analytics" }, { "name": "sprint-6" }]
+}

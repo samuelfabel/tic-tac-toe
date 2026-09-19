@@ -1,0 +1,139 @@
+{
+  "name": "WF_GENERATE_CONTENT",
+  "meta": {
+    "description": "Sprint 3: IA classifica + gera copy WhatsApp/Instagram. Não inventa preço, desconto, idade, cupom, material, etc.",
+    "sprint": 3
+  },
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{ "field": "minutes", "minutesInterval": 20 }]
+        }
+      },
+      "id": "schedule-content",
+      "name": "Schedule",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT p.*,\n  s.avg_price_30d, s.min_price_30d, s.samples_30d,\n  c.code AS coupon_code, c.discount_value AS coupon_value, c.discount_type AS coupon_type\nFROM products p\nLEFT JOIN v_product_price_stats s ON s.product_id = p.id\nLEFT JOIN LATERAL (\n  SELECT * FROM coupons c\n  WHERE c.active AND (c.product_id = p.id OR c.category = p.category)\n    AND (c.expires_at IS NULL OR c.expires_at > NOW())\n  ORDER BY c.created_at DESC LIMIT 1\n) c ON TRUE\nWHERE p.active\n  AND p.opportunity_score >= COALESCE(($env.OPPORTUNITY_SCORE_THRESHOLD)::numeric, 70)\n  AND (p.ai_classified_at IS NULL OR p.ai_publishable IS NULL)\nORDER BY p.opportunity_score DESC\nLIMIT 30;",
+        "options": {}
+      },
+      "id": "fetch-approved",
+      "name": "Produtos aprovados sem curadoria",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [260, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Monta payload factual — só dados do banco\nreturn $input.all().map((item) => {\n  const p = item.json;\n  return {\n    json: {\n      product_id: p.id,\n      classify_input: {\n        title: p.title,\n        price: Number(p.price),\n        original_price: p.original_price != null ? Number(p.original_price) : null,\n        rating: p.rating != null ? Number(p.rating) : null,\n        reviews: p.review_count != null ? Number(p.review_count) : null,\n        sold: p.sold_count != null ? Number(p.sold_count) : null,\n        category: p.category ?? 'unknown',\n        avg_price_30d: p.avg_price_30d != null ? Number(p.avg_price_30d) : null,\n        min_price_30d: p.min_price_30d != null ? Number(p.min_price_30d) : null,\n        coupon_code: p.coupon_code ?? null,\n        coupon_value: p.coupon_value != null ? Number(p.coupon_value) : null,\n        coupon_type: p.coupon_type ?? null\n      },\n      affiliate_url: p.affiliate_url,\n      image_url: p.image_url,\n      source: p.source,\n      opportunity_score: Number(p.opportunity_score)\n    }\n  };\n});"
+      },
+      "id": "build-payload",
+      "name": "Montar payload factual",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [520, 0]
+    },
+    {
+      "parameters": {
+        "modelId": { "__rl": true, "mode": "id", "value": "gpt-4o-mini" },
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "={{$env.PROMPT_CLASSIFY || 'Veja prompts/classify-product.md'}}"
+            },
+            {
+              "role": "user",
+              "content": "=Classifique este produto. Responda APENAS JSON válido.\n{{JSON.stringify($json.classify_input)}}"
+            }
+          ]
+        },
+        "options": { "temperature": 0.2 }
+      },
+      "id": "ai-classify",
+      "name": "IA — Classificar produto",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.8,
+      "position": [780, 0],
+      "notes": "Cole o conteúdo de prompts/classify-product.md no system prompt. Use OpenAI credential do n8n."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [{ "value1": "={{$json.publishable}}", "value2": true }]
+        }
+      },
+      "id": "if-publishable",
+      "name": "IA approve?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1040, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "const p = $json;\nconst input = $('Montar payload factual').item.json.classify_input;\nconst url = $('Montar payload factual').item.json.affiliate_url;\n\nconst priceFmt = Number(input.price).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });\nconst ratingLine = input.rating != null ? `⭐ ${String(input.rating).replace('.', ',')}/5` : null;\nconst soldLine = input.sold != null ? `🛒 +${Number(input.sold).toLocaleString('pt-BR')} vendidos` : null;\nconst couponLine = input.coupon_code ? `🏷️ Cupom: ${input.coupon_code}` : null;\n\nlet story = null;\nif (input.min_price_30d != null && input.price <= input.min_price_30d) {\n  story = '🔥 MENOR PREÇO REGISTRADO!';\n} else if (input.avg_price_30d != null && input.price <= input.avg_price_30d * 0.75) {\n  const avg = Number(input.avg_price_30d).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });\n  story = `🔥 PREÇO MUITO ABAIXO DO HISTÓRICO\\nMédia 30d: ${avg} → agora ${priceFmt}`;\n}\n\nconst wa = [\n  '🔥 ACHADINHO KIDS',\n  input.title,\n  story,\n  ratingLine,\n  soldLine,\n  `💰 ${priceFmt}`,\n  couponLine,\n  `👉 PEGAR OFERTA\\n${url}`\n].filter(Boolean).join('\\n');\n\nconst ig = [\n  `🧸 Achadinho!`,\n  input.title,\n  story,\n  `Por ${priceFmt} hoje.`,\n  ratingLine,\n  soldLine,\n  couponLine,\n  '#achadinhos #maternidade #kids #oferta'\n].filter(Boolean).join('\\n');\n\nreturn [{ json: { ...p, content_whatsapp: wa, content_instagram: ig, affiliate_url: url } }];"
+      },
+      "id": "build-copy",
+      "name": "Gerar copy (factual)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1300, -80],
+      "notes": "Copy base sem alucinação. Opcionalmente refine com prompts/generate-*.md passando só campos factuais."
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE products SET\n  category = COALESCE($1, category),\n  subcategory = COALESCE($2, subcategory),\n  target_age_min = $3,\n  target_age_max = $4,\n  audience = $5,\n  ai_quality = $6,\n  ai_publishable = $7,\n  ai_content_angle = $8,\n  ai_reason = $9,\n  ai_classified_at = NOW()\nWHERE id = $10;",
+        "options": {}
+      },
+      "id": "save-ai",
+      "name": "Salvar curadoria IA",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1560, -80]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE products SET ai_publishable = FALSE, ai_reason = $1, ai_classified_at = NOW() WHERE id = $2;",
+        "options": {}
+      },
+      "id": "reject-ai",
+      "name": "Rejeitar curadoria",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1300, 120]
+    }
+  ],
+  "connections": {
+    "Schedule": {
+      "main": [[{ "node": "Produtos aprovados sem curadoria", "type": "main", "index": 0 }]]
+    },
+    "Produtos aprovados sem curadoria": {
+      "main": [[{ "node": "Montar payload factual", "type": "main", "index": 0 }]]
+    },
+    "Montar payload factual": {
+      "main": [[{ "node": "IA — Classificar produto", "type": "main", "index": 0 }]]
+    },
+    "IA — Classificar produto": {
+      "main": [[{ "node": "IA approve?", "type": "main", "index": 0 }]]
+    },
+    "IA approve?": {
+      "main": [
+        [{ "node": "Gerar copy (factual)", "type": "main", "index": 0 }],
+        [{ "node": "Rejeitar curadoria", "type": "main", "index": 0 }]
+      ]
+    },
+    "Gerar copy (factual)": {
+      "main": [[{ "node": "Salvar curadoria IA", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": { "executionOrder": "v1", "timezone": "America/Sao_Paulo" },
+  "tags": [{ "name": "content" }, { "name": "sprint-3" }]
+}

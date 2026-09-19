@@ -1,0 +1,37 @@
+{
+  "title": "AiClassification",
+  "description": "Resposta estruturada da IA após o score matemático. Campos factuais ausentes devem ser null — nunca inventados.",
+  "type": "object",
+  "required": [
+    "category",
+    "subcategory",
+    "quality",
+    "publishable",
+    "content_angle",
+    "reason"
+  ],
+  "properties": {
+    "category": {
+      "type": ["string", "null"],
+      "enum": ["MATERNIDADE", "BEBE", "CRIANCA", "CASA_COM_CRIANCAS", "PRESENTES", null]
+    },
+    "subcategory": { "type": ["string", "null"] },
+    "target_age_min": { "type": ["integer", "null"], "minimum": 0 },
+    "target_age_max": { "type": ["integer", "null"], "minimum": 0 },
+    "audience": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": ["gestantes", "maes", "pais", "presente", "bebe", "crianca"]
+      }
+    },
+    "quality": {
+      "type": "string",
+      "enum": ["high", "medium", "low", "unknown"]
+    },
+    "publishable": { "type": "boolean" },
+    "content_angle": { "type": ["string", "null"] },
+    "reason": { "type": "string" }
+  },
+  "additionalProperties": false
+}

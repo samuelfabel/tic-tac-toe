@@ -1,0 +1,71 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: kids-deals-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-kidsdeals}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      POSTGRES_DB: ${POSTGRES_DB:-kids_deals}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ../database/migrations:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-kidsdeals} -d ${POSTGRES_DB:-kids_deals}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - kids-deals
+
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: kids-deals-n8n
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      N8N_HOST: ${N8N_HOST:-localhost}
+      N8N_PORT: 5678
+      N8N_PROTOCOL: ${N8N_PROTOCOL:-http}
+      WEBHOOK_URL: ${WEBHOOK_URL:-http://localhost:5678/}
+      GENERIC_TIMEZONE: ${GENERIC_TIMEZONE:-America/Sao_Paulo}
+      TZ: ${GENERIC_TIMEZONE:-America/Sao_Paulo}
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: postgres
+      DB_POSTGRESDB_PORT: 5432
+      DB_POSTGRESDB_DATABASE: ${POSTGRES_DB:-kids_deals}
+      DB_POSTGRESDB_USER: ${POSTGRES_USER:-kidsdeals}
+      DB_POSTGRESDB_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:-change-me-to-a-long-random-string}
+      N8N_BASIC_AUTH_ACTIVE: ${N8N_BASIC_AUTH_ACTIVE:-true}
+      N8N_BASIC_AUTH_USER: ${N8N_BASIC_AUTH_USER:-admin}
+      N8N_BASIC_AUTH_PASSWORD: ${N8N_BASIC_AUTH_PASSWORD:-changeme}
+      # App secrets (used by workflow expressions / env vars)
+      SHOPEE_AFFILIATE_ID: ${SHOPEE_AFFILIATE_ID:-}
+      SHOPEE_APP_ID: ${SHOPEE_APP_ID:-}
+      SHOPEE_SECRET: ${SHOPEE_SECRET:-}
+      ML_AFFILIATE_TOKEN: ${ML_AFFILIATE_TOKEN:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      META_ACCESS_TOKEN: ${META_ACCESS_TOKEN:-}
+      WHATSAPP_PHONE_NUMBER_ID: ${WHATSAPP_PHONE_NUMBER_ID:-}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      OPPORTUNITY_SCORE_THRESHOLD: ${OPPORTUNITY_SCORE_THRESHOLD:-70}
+    ports:
+      - "${N8N_PORT:-5678}:5678"
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ../n8n:/workflows:ro
+    networks:
+      - kids-deals
+
+volumes:
+  postgres_data:
+  n8n_data:
+
+networks:
+  kids-deals:
+    driver: bridge

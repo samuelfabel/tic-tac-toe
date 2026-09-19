@@ -1,0 +1,59 @@
+{
+  "$schema": "./product-normalized.schema.json",
+  "title": "ProductNormalized",
+  "description": "Contrato canônico produzido por todo Source Adapter (Shopee, ML, Amazon...). O restante do pipeline depende apenas deste formato.",
+  "type": "object",
+  "required": [
+    "source",
+    "source_product_id",
+    "title",
+    "price",
+    "currency"
+  ],
+  "properties": {
+    "source": {
+      "type": "string",
+      "enum": ["shopee", "mercadolivre", "amazon", "other"]
+    },
+    "source_product_id": { "type": "string", "minLength": 1 },
+    "title": { "type": "string", "minLength": 1 },
+    "description": { "type": ["string", "null"] },
+    "product_url": { "type": ["string", "null"], "format": "uri" },
+    "affiliate_url": { "type": ["string", "null"], "format": "uri" },
+    "image_url": { "type": ["string", "null"], "format": "uri" },
+    "category": { "type": ["string", "null"] },
+    "subcategory": { "type": ["string", "null"] },
+    "price": { "type": "number", "minimum": 0 },
+    "original_price": { "type": ["number", "null"], "minimum": 0 },
+    "rating": { "type": ["number", "null"], "minimum": 0, "maximum": 5 },
+    "review_count": { "type": ["integer", "null"], "minimum": 0 },
+    "sold_count": { "type": ["integer", "null"], "minimum": 0 },
+    "commission_percent": { "type": ["number", "null"], "minimum": 0 },
+    "extra_commission_percent": { "type": ["number", "null"], "minimum": 0 },
+    "currency": { "type": "string", "default": "BRL" },
+    "coupon_code": { "type": ["string", "null"] },
+    "raw": {
+      "type": "object",
+      "description": "Payload original do marketplace (auditoria). Não usar para publicação."
+    }
+  },
+  "additionalProperties": false,
+  "examples": [
+    {
+      "source": "shopee",
+      "source_product_id": "123456789",
+      "title": "Kit 20 peças brinquedo educativo",
+      "price": 39.9,
+      "original_price": 89.9,
+      "rating": 4.8,
+      "review_count": 1520,
+      "sold_count": 8000,
+      "product_url": "https://shopee.com.br/product/...",
+      "affiliate_url": "https://s.shopee.com.br/...",
+      "image_url": "https://cf.shopee.com.br/...",
+      "commission_percent": 5,
+      "extra_commission_percent": 10,
+      "currency": "BRL"
+    }
+  ]
+}
